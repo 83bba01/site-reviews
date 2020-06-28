@@ -1,6 +1,7 @@
 <?php
 
 use GeminiLabs\SiteReviews\Application;
+use GeminiLabs\SiteReviews\Arguments;
 use GeminiLabs\SiteReviews\Commands\CreateReview;
 use GeminiLabs\SiteReviews\Database\OptionManager;
 use GeminiLabs\SiteReviews\Database\RatingManager;
@@ -27,6 +28,7 @@ add_filter('plugins_loaded', function () {
         'glsr_get_option' => 4,
         'glsr_get_options' => 1,
         'glsr_get_rating' => 2,
+        'glsr_get_ratings' => 2,
         'glsr_get_review' => 2,
         'glsr_get_reviews' => 2,
         'glsr_log' => 3,
@@ -50,24 +52,6 @@ function glsr($alias = null, array $parameters = [])
     return !is_null($alias)
         ? $app->make($alias, $parameters)
         : $app;
-}
-
-/**
- * array_column() alternative specifically for PHP v7.0.x.
- * @param $column string
- * @return array
- */
-function glsr_array_column(array $array, $column)
-{
-    $result = array();
-    foreach ($array as $subarray) {
-        $subarray = (array) $subarray;
-        if (!isset($subarray[$column])) {
-            continue;
-        }
-        $result[] = $subarray[$column];
-    }
-    return $result;
 }
 
 /**
@@ -145,26 +129,29 @@ function glsr_get_options()
 /**
  * @return object
  */
-function glsr_get_rating($args = array())
+function glsr_get_ratings($args = array())
 {
     $args = Arr::consolidate($args);
     $counts = glsr(RatingManager::class)->ratings($args);
-    return (object) array(
-        'average' => glsr(Rating::class)->getAverage($counts),
+    return new Arguments(array(
+        'average' => glsr(Rating::class)->average($counts),
         'maximum' => glsr()->constant('MAX_RATING', Rating::class),
         'minimum' => glsr()->constant('MIN_RATING', Rating::class),
         'ratings' => $counts,
         'reviews' => array_sum($counts),
-    );
+    ));
 }
 
 /**
- * @param \WP_Post|int $post
+ * @param int|\WP_Post $postId
  * @return \GeminiLabs\SiteReviews\Review
  */
-function glsr_get_review($post)
+function glsr_get_review($postId)
 {
-    return glsr(ReviewManager::class)->get($post);
+    if (!is_numeric($postId)) {
+        $postId = get_post($postId)->ID;
+    }
+    return glsr(ReviewManager::class)->get($postId);
 }
 
 /**

@@ -2,15 +2,15 @@
 
 namespace GeminiLabs\SiteReviews\Controllers\ListTableColumns;
 
-use GeminiLabs\SiteReviews\Rating;
+use GeminiLabs\SiteReviews\Review;
 
 class ColumnValueEmail implements ColumnValue
 {
     /**
      * {@inheritdoc}
      */
-    public function handle(Rating $rating)
+    public function handle(Review $review)
     {
-        return $rating->email;
+        return $review->email;
     }
 }

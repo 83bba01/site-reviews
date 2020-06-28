@@ -2,19 +2,24 @@
 
 namespace GeminiLabs\SiteReviews;
 
-use GeminiLabs\SiteReviews\Database\Cache;
 use GeminiLabs\SiteReviews\Database\Query;
-use GeminiLabs\SiteReviews\Database\QueryBuilder;
-use GeminiLabs\SiteReviews\Database\RatingManager;
-use GeminiLabs\SiteReviews\Database\SqlQueries;
+use GeminiLabs\SiteReviews\Database\QuerySql;
 use GeminiLabs\SiteReviews\Database\SqlSchema;
-use GeminiLabs\SiteReviews\Helpers\Arr;
+use GeminiLabs\SiteReviews\Defaults\RatingDefaults;
+use GeminiLabs\SiteReviews\Helper;
 use GeminiLabs\SiteReviews\Helpers\Str;
-use WP_Post;
 use WP_Query;
 
 class Database
 {
+    protected $db;
+
+    public function __construct()
+    {
+        global $wpdb;
+        $this->db = $wpdb;
+    }
+
     /**
      * @return void
      */
@@ -25,106 +30,91 @@ class Database
     }
 
     /**
-     * @param int $postId
-     * @param string $key
-     * @param bool $single
-     * @return mixed
+     * @param int $reviewId
+     * @return int|false
      */
-    public function get($postId, $key, $single = true)
+    public function delete($reviewId)
     {
-        if ($field = $this->getRatingField($postId, $key)) {
-            return $field;
-        }
-        $key = Str::prefix('_', $key);
-        return get_post_meta(intval($postId), $key, $single);
+        return $this->db->delete(glsr(Query::class)->table('ratings'), [
+            'review_id' => $reviewId,
+        ]);
     }
 
     /**
-     * @param int $postId
-     * @param string $assignedTo
-     * @return void|WP_Post
+     * Search SQL filter for matching against post title only.
+     * @see http://wordpress.stackexchange.com/a/11826/1685
+     * @param string $search
+     * @return string
+     * @filter posts_search
      */
-    public function getAssignedToPost($postId, $assignedTo = '')
+    public function filterSearchByTitle($search, WP_Query $query)
     {
-        if (empty($assignedTo)) {
-            $assignedTo = $this->get($postId, 'assigned_to');
+        if (empty($search) || empty($query->get('search_terms'))) {
+            return $search;
         }
-        if (empty($assignedTo)) {
-            return;
+        global $wpdb;
+        $n = empty($query->get('exact'))
+            ? '%'
+            : '';
+        $search = [];
+        foreach ((array) $query->get('search_terms') as $term) {
+            $search[] = $wpdb->prepare("{$wpdb->posts}.post_title LIKE %s", $n.$wpdb->esc_like($term).$n);
         }
-        $assignedPost = get_post($assignedTo);
-        if ($assignedPost instanceof WP_Post && $assignedPost->ID != $postId) {
-            return $assignedPost;
+        if (!is_user_logged_in()) {
+            $search[] = "{$wpdb->posts}.post_password = ''";
         }
+        return ' AND '.implode(' AND ', $search);
     }
 
     /**
-     * @param int $postId
-     * @param string $field
-     * @return mixed
+     * @param int $reviewId
+     * @return \GeminiLabs\SiteReviews\Review|false
      */
-    public function getRatingField($postId, $field)
+    public function insert($reviewId, array $data = [])
     {
-        $allowedKeys = ['is_approved', 'is_pinned', 'rating', 'type'];
-        return in_array($field, $allowedKeys)
-            ? glsr(Query::class)->rating($postId)->{$field}
-            : null;
+        $defaults = glsr(RatingDefaults::class)->restrict($data);
+        $data = Arr::set($defaults, 'review_id', $reviewId);
+        $result = $this->insertRaw(glsr(Query::class)->table('ratings'), $data);
+        return (false !== $result)
+            ? glsr(ReviewManager::class)->get($reviewId)
+            : false;
     }
 
     /**
-     * @param string $metaKey
-     * @param string $metaValue
-     * @return array|int
+     * @param string $table
+     * @return int|false
      */
-    public function getReviewCount($metaKey = '', $metaValue = '')
+    public function insertBulk($table, array $values, array $fields)
     {
-        if (!$metaKey) {
-            return (array) wp_count_posts(Application::POST_TYPE);
-        }
-        $counts = glsr(Cache::class)->getReviewCountsFor($metaKey);
-        if (!$metaValue) {
-            return $counts;
-        }
-        return Arr::get($counts, $metaValue, 0);
-    }
-
-    /**
-     * @param string $metaReviewType
-     * @return array
-     */
-    public function getReviewIdsByType($metaReviewType)
-    {
-        return glsr(SqlQueries::class)->getReviewIdsByType($metaReviewType);
-    }
-
-    /**
-     * @param string $key
-     * @param string $status
-     * @return array
-     */
-    public function getReviewsMeta($key, $status = 'publish')
-    {
-        return glsr(SqlQueries::class)->getReviewsMeta($key, $status);
-    }
-
-    /**
-     * @param string $field
-     * @return array
-     */
-    public function getTermIds(array $values, $field)
-    {
-        $termIds = [];
+        $this->db->insert_id = 0;
+        $data = [];
         foreach ($values as $value) {
-            $term = get_term_by($field, $value, Application::TAXONOMY);
-            if (!isset($term->term_id)) {
-                continue;
+            $value = array_intersect_key($value, array_flip($fields)); // only keep field values
+            if (count($value) === count($fields)) {
+                $value = array_merge(array_flip($fields), $value); // make sure the order is correct
+                $data[] = glsr(QuerySql::class)->escValuesForInsert($value);
             }
-            $termIds[] = $term->term_id;
         }
-        return $termIds;
+        $table = glsr(Query::class)->table($table);
+        $fields = glsr(QuerySql::class)->escFieldsForInsert(array_keys($data));
+        $values = implode(',', array_values($data));
+        return $this->db->query("INSERT IGNORE INTO {$table} {$fields} VALUES {$values}");
     }
 
     /**
+     * @param string $table
+     * @return int|false
+     */
+    public function insertRaw($table, array $data)
+    {
+        $this->db->insert_id = 0;
+        $fields = glsr(QuerySql::class)->escFieldsForInsert(array_keys($data));
+        $values = glsr(QuerySql::class)->escValuesForInsert($data);
+        return $this->db->query("INSERT IGNORE INTO {$table} {$fields} VALUES {$values}");
+    }
+
+    /**
+     * Do not remove this as it has been given in code snippets.
      * @return array
      */
     public function getTerms(array $args = [])
@@ -133,7 +123,7 @@ class Database
             'count' => false,
             'fields' => 'id=>name',
             'hide_empty' => false,
-            'taxonomy' => Application::TAXONOMY,
+            'taxonomy' => glsr()->taxonomy,
         ]);
         $terms = get_terms($args);
         if (is_wp_error($terms)) {
@@ -161,6 +151,18 @@ class Database
     }
 
     /**
+     * @param int $postId
+     * @param string $key
+     * @param bool $single
+     * @return mixed
+     */
+    public function meta($postId, $key, $single = true)
+    {
+        $key = Str::prefix('_', $key);
+        return get_post_meta(Helper::castToInt($postId), $key, $single);
+    }
+
+    /**
      * @param string $searchTerm
      * @return void|string
      */
@@ -177,48 +179,36 @@ class Database
             $args['posts_per_page'] = 10;
             $args['s'] = $searchTerm;
         }
-        $queryBuilder = glsr(QueryBuilder::class);
-        add_filter('posts_search', [$queryBuilder, 'filterSearchByTitle'], 500, 2);
+        add_filter('posts_search', [$this, 'filterSearchByTitle'], 500, 2);
         $search = new WP_Query($args);
-        remove_filter('posts_search', [$queryBuilder, 'filterSearchByTitle'], 500);
-        if (!$search->have_posts()) {
-            return;
+        remove_filter('posts_search', [$this, 'filterSearchByTitle'], 500);
+        if ($search->have_posts()) {
+            $results = '';
+            while ($search->have_posts()) {
+                $search->the_post();
+                ob_start();
+                glsr()->render('partials/editor/search-result', [
+                    'ID' => get_the_ID(),
+                    'permalink' => esc_url((string) get_permalink()),
+                    'title' => esc_attr(get_the_title()),
+                ]);
+                $results .= ob_get_clean();
+            }
+            wp_reset_postdata();
+            return $results;
         }
-        $results = '';
-        while ($search->have_posts()) {
-            $search->the_post();
-            ob_start();
-            glsr()->render('partials/editor/search-result', [
-                'ID' => get_the_ID(),
-                'permalink' => esc_url((string) get_permalink()),
-                'title' => esc_attr(get_the_title()),
-            ]);
-            $results.= ob_get_clean();
-        }
-        wp_reset_postdata();
-        return $results;
     }
 
     /**
-     * @param int $postId
-     * @param string $key
-     * @param mixed $value
+     * @param int $reviewId
      * @return int|bool
      */
-    public function set($postId, $key, $value)
+    public function update($reviewId, array $data = [])
     {
-        $key = Str::prefix('_', $key);
-        return update_post_meta($postId, $key, $value);
-    }
-
-    /**
-     * @param int $postId
-     * @param string $key
-     * @param mixed $value
-     * @return int|bool
-     */
-    public function update($postId, $key, $value)
-    {
-        return $this->set($postId, $key, $value);
+        $defaults = glsr(RatingDefaults::class)->restrict($data);
+        $data = array_intersect_key($data, $defaults);
+        return $this->db->update(glsr(Query::class)->table('ratings'), $data, [
+            'review_id' => $reviewId,
+        ]);
     }
 }

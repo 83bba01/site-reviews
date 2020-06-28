@@ -6,7 +6,7 @@ use GeminiLabs\SiteReviews\Helpers\Arr;
 use GeminiLabs\SiteReviews\Helpers\Str;
 use GeminiLabs\SiteReviews\Modules\Html\Builder;
 use GeminiLabs\SiteReviews\Modules\Multilingual;
-use GeminiLabs\SiteReviews\Rating;
+use GeminiLabs\SiteReviews\Review;
 
 class ColumnValueAssignedTo implements ColumnValue
 {
@@ -34,8 +34,8 @@ class ColumnValueAssignedTo implements ColumnValue
     /**
      * {@inheritdoc}
      */
-    public function handle(Rating $rating)
+    public function handle(Review $review)
     {
-        return Str::naturalJoin($this->assignedLinks($rating->post_ids));
+        return Str::naturalJoin($this->assignedLinks($review->assigned_post_ids));
     }
 }

@@ -73,8 +73,8 @@ class PostCountsManager
     {
         $ratingCounts = $this->manager->flatten($reviewCounts);
         update_post_meta($postId, CountsManager::META_COUNT, $reviewCounts);
-        update_post_meta($postId, CountsManager::META_AVERAGE, glsr(Rating::class)->getAverage($ratingCounts));
-        update_post_meta($postId, CountsManager::META_RANKING, glsr(Rating::class)->getRanking($ratingCounts));
+        update_post_meta($postId, CountsManager::META_AVERAGE, glsr(Rating::class)->average($ratingCounts));
+        update_post_meta($postId, CountsManager::META_RANKING, glsr(Rating::class)->ranking($ratingCounts));
     }
 
     /**

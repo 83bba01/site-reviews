@@ -73,32 +73,6 @@ class QueryBuilder
     }
 
     /**
-     * Search SQL filter for matching against post title only.
-     * @see http://wordpress.stackexchange.com/a/11826/1685
-     * @param string $search
-     * @return string
-     * @filter posts_search
-     */
-    public function filterSearchByTitle($search, WP_Query $query)
-    {
-        if (empty($search) || empty($query->get('search_terms'))) {
-            return $search;
-        }
-        global $wpdb;
-        $n = empty($query->get('exact'))
-            ? '%'
-            : '';
-        $search = [];
-        foreach ((array) $query->get('search_terms') as $term) {
-            $search[] = $wpdb->prepare("{$wpdb->posts}.post_title LIKE %s", $n.$wpdb->esc_like($term).$n);
-        }
-        if (!is_user_logged_in()) {
-            $search[] = "{$wpdb->posts}.post_password = ''";
-        }
-        return ' AND '.implode(' AND ', $search);
-    }
-
-    /**
      * Get the current page number from the global query.
      * @param bool $isEnabled
      * @return int

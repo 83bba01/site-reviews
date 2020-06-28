@@ -25,7 +25,7 @@ mix.options({
   terser: {
     terserOptions: {
       compress: {
-        drop_console: mix.inProduction(),
+        // drop_console: mix.inProduction(),
       },
       mangle: {
         properties: {regex: /[a-zA-Z]+_$/}

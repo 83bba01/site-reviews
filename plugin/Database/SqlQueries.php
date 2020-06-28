@@ -3,6 +3,8 @@
 namespace GeminiLabs\SiteReviews\Database;
 
 use GeminiLabs\SiteReviews\Application;
+use GeminiLabs\SiteReviews\Database\SqlSchema;
+use GeminiLabs\SiteReviews\Helper;
 use GeminiLabs\SiteReviews\Helpers\Arr;
 use GeminiLabs\SiteReviews\Helpers\Str;
 
@@ -57,6 +59,24 @@ class SqlQueries
             AND m.meta_value = '{$metaReviewId}'
         ");
         return intval($postId);
+    }
+
+    /**
+     * @return array
+     */
+    public function getRatings(array $args)
+    {
+        // get types
+        // get for each type
+        $table = glsr(SqlSchema::class)->table('ratings');
+        return (array) $this->db->get_results("
+            SELECT r.rating AS rating, COUNT(r.rating) AS count
+            FROM {$table} AS r
+            {$this->getInnerJoinForRatings($args)}
+            WHERE r.is_approved = 1
+            {$this->getAndForRatings($args)}
+            GROUP BY rating
+        ");
     }
 
     /**
@@ -181,15 +201,43 @@ class SqlQueries
         $postIds = implode(',', array_filter(Arr::get($args, 'post_ids', [])));
         $termIds = implode(',', array_filter(Arr::get($args, 'term_ids', [])));
         if (!empty($args['type'])) {
-            $and.= "AND m2.meta_value = '{$args['type']}' ";
+            $and .= "AND m2.meta_value = '{$args['type']}' ";
         }
         if ($postIds) {
-            $and.= "AND m3.meta_key = '_assigned_to' AND m3.meta_value IN ({$postIds}) ";
+            $and .= "AND m3.meta_key = '_assigned_to' AND m3.meta_value IN ({$postIds}) ";
         }
         if ($termIds) {
-            $and.= "AND tr.term_taxonomy_id IN ({$termIds}) ";
+            $and .= "AND tr.term_taxonomy_id IN ({$termIds}) ";
         }
-        return apply_filters('site-reviews/query/and-for-counts', $and);
+        return glsr()->filter('query/and-for-counts', $and);
+    }
+
+    /**
+     * @param string $and
+     * @return string
+     */
+    protected function getAndForRatings(array $args, $and = '')
+    {
+        $assignedQueries = [];
+        if ($postIds = Arr::consolidate(Arr::get($args, 'post_ids', []))) {
+            $postIds = implode(',', array_filter($postIds));
+            $assignedQueries[] = "(ap.post_id IN ({$postIds}) AND ap.is_published = 1)";
+        }
+        if ($termIds = Arr::consolidate(Arr::get($args, 'term_ids', []))) {
+            $termIds = implode(',', array_filter($termIds));
+            $assignedQueries[] = "at.term_id IN ({$termIds})";
+        }
+        if ($rating = Helper::castToInt(Arr::get($args, 'rating'))) {
+            ++$rating;
+            $and .= "AND r.rating < {$rating} ";
+        }
+        if ($type = Arr::get($args, 'type')) {
+            $and .= "AND r.type = '{$type}' ";
+        }
+        if ($assignedQuery = implode(' OR ', $assignedQueries)) {
+            $and .= "AND ($assignedQuery) ";
+        }
+        return glsr()->filter('query/and-for-ratings', $and);
     }
 
     /**
@@ -199,11 +247,28 @@ class SqlQueries
     protected function getInnerJoinForCounts(array $args, $innerJoin = '')
     {
         if (!empty(Arr::get($args, 'post_ids'))) {
-            $innerJoin.= "INNER JOIN {$this->db->postmeta} AS m3 ON p.ID = m3.post_id ";
+            $innerJoin .= "INNER JOIN {$this->db->postmeta} AS m3 ON p.ID = m3.post_id ";
         }
         if (!empty(Arr::get($args, 'term_ids'))) {
-            $innerJoin.= "INNER JOIN {$this->db->term_relationships} AS tr ON p.ID = tr.object_id ";
+            $innerJoin .= "INNER JOIN {$this->db->term_relationships} AS tr ON p.ID = tr.object_id ";
         }
-        return apply_filters('site-reviews/query/inner-join-for-counts', $innerJoin);
+        return glsr()->filter('query/inner-join-for-counts', $innerJoin);
+    }
+
+    /**
+     * @param string $innerJoin
+     * @return string
+     */
+    protected function getInnerJoinForRatings(array $args, $innerJoin = '')
+    {
+        if (Arr::consolidate(Arr::get($args, 'post_ids', []))) {
+            $table = glsr(SqlSchema::class)->table('assigned_posts');
+            $innerJoin .= "INNER JOIN {$table} AS ap ON r.ID = ap.rating_id ";
+        }
+        if (Arr::consolidate(Arr::get($args, 'term_ids', []))) {
+            $table = glsr(SqlSchema::class)->table('assigned_terms');
+            $innerJoin .= "INNER JOIN {$table} AS at ON r.ID = at.rating_id ";
+        }
+        return glsr()->filter('query/inner-join-for-ratings', $innerJoin);
     }
 }

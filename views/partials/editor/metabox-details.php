@@ -10,11 +10,3 @@
     <?php endforeach; ?>
     </tbody>
 </table>
-
-<div class="glsr-metabox-actions clearfix">
-    <div class="glsr-revert-action">
-        <span class="spinner"></span>
-        <?= $button; ?>
-    </div>
-    <div class="clear"></div>
-</div>

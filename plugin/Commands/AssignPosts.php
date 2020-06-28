@@ -3,7 +3,7 @@
 namespace GeminiLabs\SiteReviews\Commands;
 
 use GeminiLabs\SiteReviews\Contracts\CommandContract as Contract;
-use GeminiLabs\SiteReviews\Database\RatingManager;
+use GeminiLabs\SiteReviews\Database\ReviewManager;
 
 class AssignPosts implements Contract
 {
@@ -22,7 +22,7 @@ class AssignPosts implements Contract
     public function handle()
     {
         foreach ($this->postIds as $postId) {
-            glsr(RatingManager::class)->assignPost($this->ratingId, $postId);
+            glsr(ReviewManager::class)->assignPost($this->ratingId, $postId);
         }
     }
 }

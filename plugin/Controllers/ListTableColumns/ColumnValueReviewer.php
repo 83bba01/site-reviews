@@ -2,22 +2,23 @@
 
 namespace GeminiLabs\SiteReviews\Controllers\ListTableColumns;
 
+use GeminiLabs\SiteReviews\Helper;
 use GeminiLabs\SiteReviews\Modules\Html\Builder;
-use GeminiLabs\SiteReviews\Rating;
+use GeminiLabs\SiteReviews\Review;
 
 class ColumnValueReviewer implements ColumnValue
 {
     /**
      * {@inheritdoc}
      */
-    public function handle(Rating $rating)
+    public function handle(Review $review)
     {
-        if ($userId = (int) get_post($rating->review_id)->post_author) {
+        if ($userId = (int) $review->author_id) {
             return glsr(Builder::class)->a([
                 'href' => get_author_posts_url($userId),
-                'text' => $rating->name,
+                'text' => Helper::ifEmpty($review->author, __('Unknown', 'admin-text', 'site-reviews')),
             ]);
         }
-        return $rating->name;
+        return $review->author;
     }
 }

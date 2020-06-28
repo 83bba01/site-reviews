@@ -26,11 +26,11 @@ jQuery( function( $ ) {
 			var result = $( ev.currentTarget );
 			var template = wp.template( 'glsr-assigned-post' );
 			var entry = {
+				id: result.data( 'id' ),
 				url: result.data( 'url' ),
 				title: result.text(),
 			};
 			if( template ) {
-				this.el.find( 'input#assigned_to' ).val( result.data( 'id' ));
 				this.el.find( '.description' ).html( template( entry ));
 				this.el.on( 'click', '.glsr-remove-button', this.onUnassign_.bind( this ));
 				this.reset_();

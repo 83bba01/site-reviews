@@ -8,8 +8,6 @@ use GeminiLabs\SiteReviews\Controllers\EditorController\Labels;
 use GeminiLabs\SiteReviews\Controllers\EditorController\Metaboxes;
 use GeminiLabs\SiteReviews\Controllers\ListTableColumns\ColumnValueReviewType;
 use GeminiLabs\SiteReviews\Database;
-use GeminiLabs\SiteReviews\Database\RatingManager;
-use GeminiLabs\SiteReviews\Database\ReviewManager;
 use GeminiLabs\SiteReviews\Defaults\CreateReviewDefaults;
 use GeminiLabs\SiteReviews\Helpers\Arr;
 use GeminiLabs\SiteReviews\Helpers\Str;
@@ -53,7 +51,7 @@ class EditorController extends Controller
      */
     public function filterIsProtectedMeta($protected, $metaKey, $metaType)
     {
-        if ('post' == $metaType && Application::POST_TYPE == get_post_type()) {
+        if ('post' == $metaType && glsr()->post_type == get_post_type()) {
             $values = glsr(CreateReviewDefaults::class)->unguarded();
             $values = Arr::prefixKeys($values);
             if (array_key_exists($metaKey, $values)) {
@@ -83,10 +81,9 @@ class EditorController extends Controller
     {
         add_meta_box(Application::ID.'_assigned_to', _x('Assigned To', 'admin-text', 'site-reviews'), [$this, 'renderAssignedToMetabox'], null, 'side');
         add_meta_box(Application::ID.'_review', _x('Details', 'admin-text', 'site-reviews'), [$this, 'renderDetailsMetaBox'], null, 'side');
-        if ('local' != glsr(Database::class)->get($post->ID, 'review_type')) {
-            return;
+        if ('local' === glsr(Query::class)->review($post->ID)->type) {
+            add_meta_box(Application::ID.'_response', _x('Respond Publicly', 'admin-text', 'site-reviews'), [$this, 'renderResponseMetaBox'], null, 'normal');
         }
-        add_meta_box(Application::ID.'_response', _x('Respond Publicly', 'admin-text', 'site-reviews'), [$this, 'renderResponseMetaBox'], null, 'normal');
     }
 
     /**
@@ -122,15 +119,22 @@ class EditorController extends Controller
      */
     public function renderAssignedToMetabox($post)
     {
-        if (!$this->isReviewPostType($post)) {
-            return;
+        if (Review::isReview($post)) {
+            $review = glsr(Query::class)->review($post->ID);
+            wp_nonce_field('assigned_to', '_nonce-assigned-to', false);
+            $templates = array_reduce($review->assigned_post_ids, function ($carry, $postId) {
+                return $carry.glsr(Template::class)->build('partials/editor/assigned-post', [
+                    'context' => [
+                        'data.id' => $postId,
+                        'data.url' => (string) get_permalink($postId),
+                        'data.title' => get_the_title($postId),
+                    ],
+                ]);
+            });
+            glsr()->render('partials/editor/metabox-assigned-to', [
+                'templates' => $templates,
+            ]);
         }
-        $assignedTo = (string) glsr(Database::class)->get($post->ID, 'assigned_to');
-        wp_nonce_field('assigned_to', '_nonce-assigned-to', false);
-        glsr()->render('partials/editor/metabox-assigned-to', [
-            'id' => $assignedTo,
-            'template' => $this->buildAssignedToTemplate($assignedTo, $post),
-        ]);
     }
 
     /**
@@ -140,14 +144,12 @@ class EditorController extends Controller
      */
     public function renderDetailsMetaBox($post)
     {
-        if (!$this->isReviewPostType($post)) {
-            return;
+        if (Review::isReview($post)) {
+            $review = glsr(Query::class)->review($post);
+            glsr()->render('partials/editor/metabox-details', [
+                'metabox' => $this->normalizeDetailsMetaBox($review),
+            ]);
         }
-        $review = glsr_get_review($post);
-        glsr()->render('partials/editor/metabox-details', [
-            'button' => $this->buildDetailsMetaBoxRevertButton($review, $post),
-            'metabox' => $this->normalizeDetailsMetaBox($review),
-        ]);
     }
 
     /**
@@ -156,17 +158,16 @@ class EditorController extends Controller
      */
     public function renderPinnedInPublishMetaBox()
     {
-        if (!$this->isReviewPostType(get_post())
-            || !glsr()->can('edit_others_posts')) {
-            return;
+        $review = glsr(Query::class)->review(get_post()->ID);
+        if ($review->isValid() && glsr()->can('edit_others_posts')) {
+            glsr(Template::class)->render('partials/editor/pinned', [
+                'context' => [
+                    'no' => _x('No', 'admin-text', 'site-reviews'),
+                    'yes' => _x('Yes', 'admin-text', 'site-reviews'),
+                ],
+                'pinned' => $review->is_pinned,
+            ]);
         }
-        glsr(Template::class)->render('partials/editor/pinned', [
-            'context' => [
-                'no' => _x('No', 'admin-text', 'site-reviews'),
-                'yes' => _x('Yes', 'admin-text', 'site-reviews'),
-            ],
-            'pinned' => wp_validate_boolean(glsr(Database::class)->get(get_the_ID(), 'is_pinned')),
-        ]);
     }
 
     /**
@@ -176,13 +177,12 @@ class EditorController extends Controller
      */
     public function renderResponseMetaBox($post)
     {
-        if (!$this->isReviewPostType($post)) {
-            return;
+        if (Review::isReview($post)) {
+            wp_nonce_field('response', '_nonce-response', false);
+            glsr()->render('partials/editor/metabox-response', [
+                'response' => glsr(Database::class)->meta($post->ID, 'response'),
+            ]);
         }
-        wp_nonce_field('response', '_nonce-response', false);
-        glsr()->render('partials/editor/metabox-response', [
-            'response' => glsr(Database::class)->get($post->ID, 'response'),
-        ]);
     }
 
     /**
@@ -192,13 +192,12 @@ class EditorController extends Controller
      */
     public function renderReviewEditor($post)
     {
-        if (!$this->isReviewPostType($post) || $this->isReviewEditable($post)) {
-            return;
+        if (Review::isReview($post) && !Review::isEditable($post)) {
+            glsr()->render('partials/editor/review', [
+                'post' => $post,
+                'response' => glsr(Database::class)->meta($post->ID, 'response'),
+            ]);
         }
-        glsr()->render('partials/editor/review', [
-            'post' => $post,
-            'response' => glsr(Database::class)->get($post->ID, 'response'),
-        ]);
     }
 
     /**
@@ -208,11 +207,10 @@ class EditorController extends Controller
     public function renderReviewFields()
     {
         $screen = glsr_current_screen();
-        if ('post' != $screen->base || Application::POST_TYPE != $screen->post_type) {
-            return;
+        if ('post' === $screen->base && glsr()->post_type === $screen->post_type) {
+            add_action('edit_form_after_title', [$this, 'renderReviewEditor']);
+            add_action('edit_form_top', [$this, 'renderReviewNotice']);
         }
-        add_action('edit_form_after_title', [$this, 'renderReviewEditor']);
-        add_action('edit_form_top', [$this, 'renderReviewNotice']);
     }
 
     /**
@@ -222,18 +220,17 @@ class EditorController extends Controller
      */
     public function renderReviewNotice($post)
     {
-        if (!$this->isReviewPostType($post) || $this->isReviewEditable($post)) {
-            return;
+        if (Review::isReview($post) && !Review::isEditable($post)) {
+            glsr(Notice::class)->addWarning(sprintf(
+                _x('%s reviews are read-only.', 'admin-text', 'site-reviews'),
+                glsr(ColumnValueReviewType::class)->handle(glsr(Query::class)->review($post->ID))
+            ));
+            glsr(Template::class)->render('partials/editor/notice', [
+                'context' => [
+                    'notices' => glsr(Notice::class)->get(),
+                ],
+            ]);
         }
-        glsr(Notice::class)->addWarning(sprintf(
-            _x('%s reviews are read-only.', 'admin-text', 'site-reviews'),
-            glsr(ColumnValueReviewType::class)->handle(glsr(RatingManager::class)->rating($post->ID))
-        ));
-        glsr(Template::class)->render('partials/editor/notice', [
-            'context' => [
-                'notices' => glsr(Notice::class)->get(),
-            ],
-        ]);
     }
 
     /**
@@ -244,29 +241,13 @@ class EditorController extends Controller
      */
     public function renderTaxonomyMetabox($post)
     {
-        if (!$this->isReviewPostType($post)) {
-            return;
+        if (Review::isReview($post)) {
+            glsr()->render('partials/editor/metabox-categories', [
+                'post' => $post,
+                'tax_name' => glsr()->taxonomy,
+                'taxonomy' => get_taxonomy(glsr()->taxonomy),
+            ]);
         }
-        glsr()->render('partials/editor/metabox-categories', [
-            'post' => $post,
-            'tax_name' => Application::TAXONOMY,
-            'taxonomy' => get_taxonomy(Application::TAXONOMY),
-        ]);
-    }
-
-    /**
-     * @return void
-     * @see $this->filterUpdateMessages()
-     * @action admin_action_revert
-     */
-    public function revertReview()
-    {
-        if (Application::ID != filter_input(INPUT_GET, 'plugin')) {
-            return;
-        }
-        check_admin_referer('revert-review_'.($postId = $this->getPostId()));
-        glsr(ReviewManager::class)->revert($postId);
-        $this->redirect($postId, 52);
     }
 
     /**
@@ -281,97 +262,27 @@ class EditorController extends Controller
         glsr(Metaboxes::class)->saveAssignedToMetabox($postId);
         glsr(Metaboxes::class)->saveResponseMetabox($postId);
         if ($isUpdating) {
-            glsr()->action('review/saved', glsr_get_review($postId));
+            glsr()->action('review/saved', glsr(Query::class)->review($postId));
         }
     }
 
     /**
-     * @param string $assignedTo
-     * @return string
-     */
-    protected function buildAssignedToTemplate($assignedTo, WP_Post $post)
-    {
-        $assignedPost = glsr(Database::class)->getAssignedToPost($post->ID, $assignedTo);
-        if (!$assignedPost instanceof WP_Post) {
-            return;
-        }
-        return glsr(Template::class)->build('partials/editor/assigned-post', [
-            'context' => [
-                'data.url' => (string) get_permalink($assignedPost),
-                'data.title' => get_the_title($assignedPost),
-            ],
-        ]);
-    }
-
-    /**
-     * @return string
-     */
-    protected function buildDetailsMetaBoxRevertButton(Review $review, WP_Post $post)
-    {
-        $isModified = !Arr::compare(
-            [$review->title, $review->content, $review->date],
-            [
-                glsr(Database::class)->get($post->ID, 'title'),
-                glsr(Database::class)->get($post->ID, 'content'),
-                glsr(Database::class)->get($post->ID, 'date'),
-            ]
-        );
-        if ($isModified) {
-            $revertUrl = wp_nonce_url(
-                admin_url('post.php?post='.$post->ID.'&action=revert&plugin='.Application::ID),
-                'revert-review_'.$post->ID
-            );
-            return glsr(Builder::class)->a(_x('Revert Changes', 'admin-text', 'site-reviews'), [
-                'class' => 'button button-large',
-                'href' => $revertUrl,
-                'id' => 'revert',
-            ]);
-        }
-        return glsr(Builder::class)->button(_x('Nothing to Revert', 'admin-text', 'site-reviews'), [
-            'class' => 'button-large',
-            'disabled' => true,
-            'id' => 'revert',
-        ]);
-    }
-
-    /**
-     * @param object $review
      * @return string|void
      */
-    protected function getReviewType($review)
+    protected function getReviewType(Review $review)
     {
         if (count(glsr()->reviewTypes) < 2) {
             return;
         }
-        $reviewType = array_key_exists($review->review_type, glsr()->reviewTypes)
-            ? glsr()->reviewTypes[$review->review_type]
-            : _x('Unknown', 'admin-text', 'site-reviews');
+        $type = $review->type();
         if (!empty($review->url)) {
-            $reviewType = glsr(Builder::class)->a($reviewType, [
+            return glsr(Builder::class)->a([
                 'href' => $review->url,
                 'target' => '_blank',
+                'text' => $type,
             ]);
         }
-        return $reviewType;
-    }
-
-    /**
-     * @return bool
-     */
-    protected function isReviewEditable($post)
-    {
-        return $this->isReviewPostType($post)
-            && post_type_supports(Application::POST_TYPE, 'title')
-            && 'local' == glsr(Database::class)->get($post->ID, 'review_type');
-    }
-
-    /**
-     * @param mixed $post
-     * @return bool
-     */
-    protected function isReviewPostType($post)
-    {
-        return $post instanceof WP_Post && Application::POST_TYPE == $post->post_type;
+        return $type;
     }
 
     /**
@@ -379,10 +290,10 @@ class EditorController extends Controller
      */
     protected function normalizeDetailsMetaBox(Review $review)
     {
-        $user = empty($review->user_id)
+        $user = empty($review->author_id)
             ? _x('Unregistered user', 'admin-text', 'site-reviews')
-            : glsr(Builder::class)->a(get_the_author_meta('display_name', $review->user_id), [
-                'href' => get_author_posts_url($review->user_id),
+            : glsr(Builder::class)->a(get_the_author_meta('display_name', $review->author_id), [
+                'href' => get_author_posts_url($review->author_id),
             ]);
         $email = empty($review->email)
             ? '&mdash;'
@@ -390,9 +301,9 @@ class EditorController extends Controller
                 'href' => 'mailto:'.$review->email.'?subject='.esc_attr(_x('RE:', 'admin-text', 'site-reviews').' '.$review->title),
             ]);
         $metabox = [
-            _x('Rating', 'admin-text', 'site-reviews') => glsr_star_rating($review->rating),
+            _x('Rating', 'admin-text', 'site-reviews') => $review->rating(),
             _x('Type', 'admin-text', 'site-reviews') => $this->getReviewType($review),
-            _x('Date', 'admin-text', 'site-reviews') => get_date_from_gmt($review->date, 'F j, Y'),
+            _x('Date', 'admin-text', 'site-reviews') => $review->date(),
             _x('Name', 'admin-text', 'site-reviews') => $review->author,
             _x('Email', 'admin-text', 'site-reviews') => $email,
             _x('User', 'admin-text', 'site-reviews') => $user,

@@ -81,8 +81,8 @@ class TermCountsManager
         }
         $ratingCounts = $this->manager->flatten($reviewCounts);
         update_term_meta($termId, CountsManager::META_COUNT, $reviewCounts);
-        update_term_meta($termId, CountsManager::META_AVERAGE, glsr(Rating::class)->getAverage($ratingCounts));
-        update_term_meta($termId, CountsManager::META_RANKING, glsr(Rating::class)->getRanking($ratingCounts));
+        update_term_meta($termId, CountsManager::META_AVERAGE, glsr(Rating::class)->average($ratingCounts));
+        update_term_meta($termId, CountsManager::META_RANKING, glsr(Rating::class)->ranking($ratingCounts));
     }
 
     /**

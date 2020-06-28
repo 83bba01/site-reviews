@@ -50,7 +50,7 @@ class TrustalyzeController extends Controller
         if ($isAccountValidated && $isIntegrationEnabled) {
             return $context;
         }
-        $context['field'].= $this->buildCreateButton();
+        $context['field'] .= $this->buildCreateButton();
         return $context;
     }
 
@@ -173,7 +173,7 @@ class TrustalyzeController extends Controller
     protected function canProceed(Review $review, $metaKey = 'trustalyze')
     {
         return glsr(OptionManager::class)->getBool($this->enabledKey)
-            && $this->isReviewPostId($review->ID)
+            && Review::isReview($review->ID)
             && !$this->hasMetaKey($review, $metaKey);
     }
 
